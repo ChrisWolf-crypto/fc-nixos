@@ -10,15 +10,19 @@ let
   listenFe = fclib.listenAddresses "ethfe";
 
   # default domain should be changed to to fcio.net once #14970 is finished
-  defaultHostname =
+  defaultFQDN =
     if (params ? location &&
         lib.hasAttrByPath [ "interfaces" "fe" ] params &&
         (length listenFe > 0))
-    then "${config.networking.hostName}.fe.${params.location}.gocept.net"
-    else "${config.networking.hostName}.gocept.net";
+    then "${config.networking.hostName}.fe.${params.location}.fcio.net"
+    else "${config.networking.hostName}.fcio.net";
 
 in
 {
+  imports = [
+    ../services/mail
+  ];
+
   options = {
 
     flyingcircus.roles.mailserver = with lib; {
@@ -26,54 +30,44 @@ in
       # and would be billed as component.
 
       enable = mkEnableOption ''
-        Enable the Flying Circus mailserver out role and configure
-        mailout on all nodes in this RG/location.
+        Flying Circus mailserver role with web UI.
+        Mailout on all nodes in this RG/location.
       '';
 
-      hostname = mkOption {
+      domains = mkOption {
+        type = types.listOf types.str;
+        example = [ "example.com" ];
+        default = [];
+        description = ''
+          List of virtual domains that this mail server serves. The first value
+          is the canonical domain used to construct internal addresses in
+          various places.
+        '';
+      };
+
+      mailHost = mkOption {
         type = types.str;
-        default = fclib.configFromFile
-          /etc/local/postfix/myhostname defaultHostname;
-        description = ''
-          Set the FQDN the mail server announces in its SMTP dialogues. Must
-          match forward and reverse DNS.
-        '';
-        example = "mail.project.example.com";
+        description = "FQDN of the mail server's frontend address.";
+        example = "mail.example.com";
       };
 
-      smtpBindAddresses = mkOption {
-        type = with types; listOf str;
-        default = listenFe;
-        description = ''
-          List of IP addresses for outgoing SMTP connections. If there is more
-          than one address for any address family, only the first one will be
-          used.
-        '';
+      webmailHost = mkOption {
+        type = types.str;
+        description = "(Virtual) host name of the webmail service.";
+        example = "webmail.example.com";
       };
-    };
 
-    flyingcircus.roles.mailout = {
-      # Mailout is considered to be included in the webgateway, but only
-      # sometimes required. So it's a separate role, which is not a billable
-      # component.
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = ''
-          Enable the Flying Circus mailserver out role and configure
-          mailout on all nodes in this RG/location.
-        '';
+      redisDatabase = mkOption {
+        type = types.int;
+        description = "Redis db id to store spam-related data";
+        default = 5;
+      };
+
+      rootAlias = mkOption {
+        type = types.str;
+        description = "Address to receive all mail to root@localhost.";
+        default = "admin@flyingcircus.io";
       };
     };
-  };
-
-  # `mailserver` will grow into a full-featured mail solution some day while
-  # `mailout` configures SMTP sending serivces for its RG.
-  config = {
-    flyingcircus.services.postfix.enable =
-      (roles.mailserver.enable || roles.mailout.enable);
-
-    flyingcircus.services.ssmtp.enable =
-      !(roles.mailserver.enable || roles.mailout.enable);
   };
 }
