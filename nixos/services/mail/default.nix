@@ -5,24 +5,25 @@ with builtins;
 let
   snm = fetchTarball {
     url = "https://github.com/flyingcircusio/nixos-mailserver/archive/d1bc7eb2b532bc0f65f52cfd4b99368a0e2bb3dc.tar.gz";
-    sha256 = "1j0d2xcnlfsp3556n8xj5g000000000000000000000000000000";
+    sha256 = "1j6bfafng0309mp7r2bd02nlhfy1zyl6r8cbs03yrwz70y20q4ka";
   };
 
-  fqdn = with config.networking; "${hostName}.${domain}";
   role = config.flyingcircus.roles.mailserver;
+  fclib = config.fclib;
+  fqdn = with config.networking; "${hostName}.${domain}";
   vmailDir = "/srv/vmail";
   passwdFile = "/var/lib/dovecot/passwd";
-
-  loginAccounts = {}; # XXX
-
-  extraVirtualAliases = {}; # XXX
+  primaryDomain = if role.domains != [] then elemAt role.domains 0 else fqdn;
 
   genericVirtual = ''
-    spam@${}
+    spam@${fqdn} devnull@${fqdn}
   '';
 
   genericVirtualPCRE = toFile "virtual.pcre" ''
   '';
+
+    # TODO submission port should circumvent some spam checks
+    # XXX autoconfig?
 
 in {
   imports = [
@@ -34,10 +35,25 @@ in {
   ];
 
   config = lib.mkIf role.enable {
+    environment.etc = {
+      # see
+      # https://gitlab.com/simple-nixos-mailserver/nixos-mailserver/-/blob/master/default.nix
+      # for a comprehensive list of options
+      "local/mail/users.json.example".text = (toJSON {
+        mbox = "user@${primaryDomain}";
+        aliases = [ "user1@${primaryDomain}" ];
+        quota = "4G";
+        sieveScript = null;
+      });
+    };
+
     mailserver = {
       enable = true;
-      inherit (role) fqdn domains;
-      inherit loginAccounts extraVirtualAliases;
+      inherit (role) domains;
+      inherit fqdn;
+      loginAccounts = fclib.jsonFromFile "/etc/local/mail/users.json" "{}";
+      extraVirtualAliases =
+        fclib.jsonFromFile "/etc/local/mail/valiases.json" "{}";
       certificateScheme = 3;
       enableImapSsl = true;
       enableManageSieve = true;
@@ -74,10 +90,6 @@ in {
         expire_cache = yes
       }
     '';
-
-    # TODO users from json
-    # TODO submission port should circumvent some spam checks
-    # XXX autoconfig?
 
     services.postfix = {
       destination = [
