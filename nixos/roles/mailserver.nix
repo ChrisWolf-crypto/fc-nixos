@@ -8,6 +8,8 @@ let
   roles = config.flyingcircus.roles;
 
   listenFe = fclib.listenAddresses "ethfe";
+  listenFe4 = filter fclib.isIp4 listenFe;
+  listenFe6 = filter fclib.isIp6 listenFe;
 
   # default domain should be changed to to fcio.net once #14970 is finished
   defaultFQDN =
@@ -47,7 +49,10 @@ in
 
       mailHost = mkOption {
         type = types.str;
-        description = "FQDN of the mail server's frontend address.";
+        description = ''
+          FQDN of the mail server's frontend address. IP adresses and
+          forward/reverse DNS must match exactly.
+        '';
         example = "mail.example.com";
       };
 
@@ -59,14 +64,28 @@ in
 
       redisDatabase = mkOption {
         type = types.int;
-        description = "Redis db id to store spam-related data";
+        description = "Redis DB id to store spam-related data";
         default = 5;
       };
 
       rootAlias = mkOption {
         type = types.str;
         description = "Address to receive all mail to root@localhost.";
-        default = "admin@flyingcircus.io";
+        default = "kc@flyingcircus.io";  # XXX
+      };
+
+      smtpBind4 = mkOption {
+        type = types.str;
+        description = "IPv4 address for outgoing connections";
+        default =
+          if listenFe4 != [] then lib.head listenFe4 else "";
+      };
+
+      smtpBind6 = mkOption {
+        type = types.str;
+        description = "IPv6 address for outgoing connections";
+        default =
+          if listenFe6 != [] then lib.head listenFe6 else "";
       };
     };
   };

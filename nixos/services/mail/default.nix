@@ -2,6 +2,9 @@
 
 with builtins;
 
+# TODO submission port should circumvent some spam checks
+# TODO autoconfig
+
 let
   snm = fetchTarball {
     url = "https://github.com/flyingcircusio/nixos-mailserver/archive/d1bc7eb2b532bc0f65f52cfd4b99368a0e2bb3dc.tar.gz";
@@ -15,15 +18,13 @@ let
   passwdFile = "/var/lib/dovecot/passwd";
   primaryDomain = if role.domains != [] then elemAt role.domains 0 else fqdn;
 
+# TODO load genericVirtual from /etc/local/mail/*.json
   genericVirtual = ''
     spam@${fqdn} devnull@${fqdn}
   '';
-
   genericVirtualPCRE = toFile "virtual.pcre" ''
   '';
 
-    # TODO submission port should circumvent some spam checks
-    # XXX autoconfig?
 
 in {
   imports = [
@@ -36,14 +37,19 @@ in {
 
   config = lib.mkIf role.enable {
     environment.etc = {
-      # see
+      # refer to the source for a comprehensive list of options:
       # https://gitlab.com/simple-nixos-mailserver/nixos-mailserver/-/blob/master/default.nix
-      # for a comprehensive list of options
       "local/mail/users.json.example".text = (toJSON {
         mbox = "user@${primaryDomain}";
+        hashedPassword = "$5$vIcN8UjKhofUvKW9$ckVkr1c8IH9jvd48pdpGbL19vrzipvHtNG8t2f77Kv/";
         aliases = [ "user1@${primaryDomain}" ];
         quota = "4G";
         sieveScript = null;
+      });
+
+      "local/mail/valiases.json.example".text = (toJSON {
+        "postmaster@${primaryDomain}" = "user1@${primaryDomain}";
+        "abuse@${primaryDomain}" = "user2@${primaryDomain}";
       });
     };
 
@@ -66,7 +72,9 @@ in {
         { name = "Archives"; auto = "subscribe"; specialUse = "Archive"; }
       ];
       policydSPFExtraConfig = ''
-        skip_addresses = 127.0.0.0/8,::ffff:127.0.0.0/104,::/64
+        skip_addresses = 127.0.0.0/8,::ffff:127.0.0.0/104,::/64,${
+          concatStringsSep "," (fclib.listenAddresses "ethfe")}
+        HELO_Whitelist = ${fqdn},${role.mailHost}
       '';
       vmailGroupName = "vmail";
       vmailUserName = "vmail";
@@ -99,20 +107,25 @@ in {
         "localhost"
       ];
       extraConfig = ''
+        empty_address_recipient = postmaster
+        enable_long_queue_ids = yes
         sender_canonical_maps = tcp:localhost:10001
         sender_canonical_classes = envelope_sender
         recipient_canonical_maps = tcp:localhost:10002
         recipient_canonical_classes = envelope_recipient, header_recipient
+        smtp_address_preference = ipv6
+        smtp_bind_address = ${role.smtpBind4}
+        smtp_bind_address6 = ${role.smtpBind6}
         smtpd_client_restrictions =
           reject_rbl_client ix.dnsbl.manitu.net,
           reject_unknown_client_hostname,
           permit
-        empty_address_recipient = mail
       '';
       extraAliases = ''
+        abuse: root
         devnull: /dev/null
         mail: root
-        abuse: root
+        postmaster: root
       '';
       inherit (role) rootAlias;
       virtual = genericVirtual;
