@@ -4,6 +4,14 @@ with builtins;
 
 # TODO submission port should circumvent some spam checks
 # TODO autoconfig
+# TODO test
+
+# Explanation of various host names:
+# - fqdn: "raw" machine name. Points to the srv address which is usually not
+#   reachable from the outside but occasionally used for locally generated mail
+#   (e.g., cron)
+# - mailHost: HELO name
+# - domains: list of mail domains for which regular mail accounts exist
 
 let
   snm = fetchTarball {
@@ -14,13 +22,13 @@ let
   role = config.flyingcircus.roles.mailserver;
   fclib = config.fclib;
   fqdn = with config.networking; "${hostName}.${domain}";
-  vmailDir = "/srv/vmail";
-  passwdFile = "/var/lib/dovecot/passwd";
   primaryDomain = if role.domains != [] then elemAt role.domains 0 else fqdn;
+  vmailDir = "/srv/mail";
+  passwdFile = "/var/lib/dovecot/passwd";
 
 # TODO load genericVirtual from /etc/local/mail/*.json
   genericVirtual = ''
-    spam@${fqdn} devnull@${fqdn}
+    spam@${role.mailHost} devnull@${fqdn}
   '';
   genericVirtualPCRE = toFile "virtual.pcre" ''
   '';
@@ -28,35 +36,51 @@ let
 
 in {
   imports = [
+    # XXX conditional import?
     snm
+    ./rspamd.nix
     # roundcube
-    # rspamd
     # postgresql
-    # redis
   ];
 
-  config = lib.mkIf role.enable {
-    environment.etc = {
-      # refer to the source for a comprehensive list of options:
-      # https://gitlab.com/simple-nixos-mailserver/nixos-mailserver/-/blob/master/default.nix
-      "local/mail/users.json.example".text = (toJSON {
-        mbox = "user@${primaryDomain}";
-        hashedPassword = "$5$vIcN8UjKhofUvKW9$ckVkr1c8IH9jvd48pdpGbL19vrzipvHtNG8t2f77Kv/";
-        aliases = [ "user1@${primaryDomain}" ];
-        quota = "4G";
-        sieveScript = null;
-      });
+  options = {
+    flyingcircus.services.mail.enable = lib.mkEnableOption ''
+      Mail server (SNM) with postfix, dovecot, rspamd, dkim & spf
+    '';
+  };
 
-      "local/mail/valiases.json.example".text = (toJSON {
-        "postmaster@${primaryDomain}" = "user1@${primaryDomain}";
-        "abuse@${primaryDomain}" = "user2@${primaryDomain}";
-      });
+  config = lib.mkIf config.flyingcircus.services.mail.enable {
+
+    environment = {
+
+      etc = {
+        # refer to the source for a comprehensive list of options:
+        # https://gitlab.com/simple-nixos-mailserver/nixos-mailserver/-/blob/master/default.nix
+        "local/mail/users.json.example".text = (toJSON {
+          "user@${primaryDomain}" = {
+            # generate with `mkpasswd -m sha-256 PASSWD`
+            hashedPassword = "$5$iCMCiTay$VXWuFJQqjEiK7FnRzaRD.y2/2Rq0PlHpnW11GsQFkOB";
+            aliases = [ "user1@${primaryDomain}" ];
+            quota = "4G";
+            sieveScript = null;
+          };
+        });
+        # these must use one of the configured domains as targets
+        "local/mail/valiases.json.example".text = (toJSON {
+          "postmaster@${primaryDomain}" = "user1@${primaryDomain}";
+          "abuse@${primaryDomain}" = "user2@${primaryDomain}";
+        });
+      };
+
+      systemPackages = with pkgs; [
+        mkpasswd
+      ];
     };
 
     mailserver = {
       enable = true;
       inherit (role) domains;
-      inherit fqdn;
+      fqdn = role.mailHost;
       loginAccounts = fclib.jsonFromFile "/etc/local/mail/users.json" "{}";
       extraVirtualAliases =
         fclib.jsonFromFile "/etc/local/mail/valiases.json" "{}";
@@ -80,9 +104,9 @@ in {
       vmailUserName = "vmail";
     };
 
-    security.acme.certs.${fqdn}.extraDomains = {
-      ${role.mailHost} = null;
-    };
+    # security.acme.certs.${fqdn}.extraDomains = {
+    #   # autoconfig?
+    # };
 
     services.dovecot2.extraConfig = ''
       passdb {
@@ -113,19 +137,21 @@ in {
         sender_canonical_classes = envelope_sender
         recipient_canonical_maps = tcp:localhost:10002
         recipient_canonical_classes = envelope_recipient, header_recipient
-        smtp_address_preference = ipv6
         smtp_bind_address = ${role.smtpBind4}
         smtp_bind_address6 = ${role.smtpBind6}
         smtpd_client_restrictions =
+          permit_mynetworks
           reject_rbl_client ix.dnsbl.manitu.net,
           reject_unknown_client_hostname,
-          permit
+        smtpd_data_restrictions = reject_unauth_pipelining
+        smtpd_helo_restrictions =
+          permit_sasl_authenticated,
+          reject_unknown_helo_hostname
       '';
       extraAliases = ''
         abuse: root
         devnull: /dev/null
         mail: root
-        postmaster: root
       '';
       inherit (role) rootAlias;
       virtual = genericVirtual;
@@ -134,8 +160,11 @@ in {
 
     services.postsrsd = {
       enable = true;
-      domain = head role.domains;
-      excludeDomains = tail config.mailserver.domains;
+      domain = primaryDomain;
+      excludeDomains =
+        if role.domains != []
+        then tail config.mailserver.domains ++ [ role.mailHost fqdn ]
+        else [];
     };
 
     systemd.services.dovecot2-expunge = {
@@ -150,5 +179,6 @@ in {
     systemd.tmpfiles.rules = [
       "f ${passwdFile} 0600 nginx"
     ];
+
   };
 }

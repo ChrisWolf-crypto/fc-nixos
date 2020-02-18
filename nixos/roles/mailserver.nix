@@ -5,7 +5,7 @@ with builtins;
 let
   params = lib.attrByPath [ "parameters" ] {} config.flyingcircus.enc;
   fclib = config.fclib;
-  roles = config.flyingcircus.roles;
+  role = config.flyingcircus.roles.mailserver;
 
   listenFe = fclib.listenAddresses "ethfe";
   listenFe4 = filter fclib.isIp4 listenFe;
@@ -57,14 +57,18 @@ in
       };
 
       webmailHost = mkOption {
-        type = types.str;
+        type = with types; nullOr str;
         description = "(Virtual) host name of the webmail service.";
         example = "webmail.example.com";
+        default = null;
       };
 
       redisDatabase = mkOption {
         type = types.int;
-        description = "Redis DB id to store spam-related data";
+        description = ''
+          Redis DB id to store spam-related data. Should be set to an unique
+          number (machine-local )to avoid conflicts.
+        '';
         default = 5;
       };
 
@@ -89,4 +93,15 @@ in
       };
     };
   };
+
+  config = lib.mkIf role.enable (lib.mkMerge [{
+      flyingcircus.services.mail.enable = true;
+      flyingcircus.services.redis.enable = lib.mkForce true;
+    }
+    (lib.mkIf (role.webmailHost != null) {
+      flyingcircus.services.nginx.enable = true;
+    })
+  ]);
+
+  # see nixos/services/mail/ for further config
 }
