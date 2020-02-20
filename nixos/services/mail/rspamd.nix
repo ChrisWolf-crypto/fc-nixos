@@ -1,7 +1,15 @@
 { config, pkgs, lib, ... }:
 
+with builtins;
+
 let
-  role = config.flyingcircus.roles.mailserver;
+  cfg = config.flyingcircus;
+  role = cfg.roles.mailserver;
+  interfaces = lib.attrByPath [ "parameters" "interfaces" ] {} cfg.enc;
+  localNets =
+    [ "127.0.0.0/8" "::/64" ] ++
+    (lib.flatten (
+      lib.mapAttrsToList (_: iface: lib.attrNames iface.networks) interfaces));
 
   # see also genericVirtual in default.nix
   spamtrapMap = builtins.toFile "spamtrap.map" ''
@@ -30,6 +38,11 @@ in
     };
 
     services.rspamd.locals = {
+      "options.inc".text = ''
+        local_addrs = [${
+          concatStringsSep ", " (map (n: "\"${n}\"") localNets)}]
+      '';
+
       "greylist.conf".text = ''
         expire = 7d;
         ipv4_mask = 24;
@@ -73,8 +86,8 @@ in
 
       # XXX generate passwd
       "worker-controller.inc".text = ''
-        password = "$2$kj3b3hii3upfxzpf4y9y8ubxcgbcs3de$qf9qhdyu9ruzci4qa63w46dkdrttqcwq3mdqwe81kwngi35kz6ky";
-        enable_password = "$2$ij98xwm31yu5qfbrfy61awbtdz83shft$ueftydb88b8ng3aexr1pfdyt3sxp187gmiczbs9gi8p9j6dcf16y";
+        password = "";
+        enable_password = "";
         dynamic_conf = "/var/lib/rspamd/rspamd_dynamic";
         static_dir = "${pkgs.rspamd}/share/rspamd/www";
       '';

@@ -3,6 +3,7 @@
 with builtins;
 
 # TODO submission port should circumvent some spam checks
+# TODO rspamd admin UI
 # TODO autoconfig
 # TODO test
 
